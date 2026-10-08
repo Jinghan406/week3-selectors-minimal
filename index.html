@@ -1,0 +1,569 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width,initial-scale=1,viewport-fit=cover">
+</head>
+<body>
+<title>Lava Selectors</title>
+<link rel="preconnect" href="https://fonts.googleapis.com">
+<link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
+<link rel="stylesheet" href="https://fonts.googleapis.com/css2?family=Inter:wght@300;400&family=JetBrains+Mono:wght@400;500&display=swap">
+<style>
+/* Vessels: every container is drawn in the same liquid field as the wax, with openings the wax passes through. Layout: one column. Each control gets a big stage beside its real-size list. White/black/greys as Bud & Drip light. Liquid drawn as signed-distance metaballs on canvas, driven by springs. Single light look by choice. */
+:root {
+  --bg: #ffffff; --line: #e4e4e4; --g1: #7a7a7a; --g2: #5c5c5c; --g3: #3a3a3a; --fg: #111111;
+  --display: "Inter", "Helvetica Neue", Arial, sans-serif;
+  --mono: "JetBrains Mono", ui-monospace, "SF Mono", Menlo, monospace;
+  color-scheme: light;
+}
+* { box-sizing: border-box; }
+body { background: var(--bg); color: var(--fg); font-family: var(--display); font-weight: 300; margin: 0; }
+.wrap { max-width: 1128px; margin: 0 auto; padding-inline: max(16px, 4vw); padding-block: 56px 96px; display: flex; flex-direction: column; gap: 56px; }
+.eyebrow { font: 500 11px/1.4 var(--mono); letter-spacing: .16em; color: var(--g2); text-transform: uppercase; margin: 0; }
+h1 { font-weight: 300; font-size: clamp(40px, 7vw, 64px); letter-spacing: -.035em; line-height: 1.05; margin: 12px 0 0; }
+.top { display: flex; justify-content: space-between; align-items: flex-end; gap: 16px; flex-wrap: wrap; }
+.ctrls button { font: 500 10px var(--mono); letter-spacing: .14em; text-transform: uppercase; color: var(--g2); background: transparent; border: 1px solid var(--line); padding: 7px 10px; cursor: pointer; }
+.ctrls button:hover, .ctrls button[aria-pressed="true"] { color: var(--fg); border-color: var(--g1); }
+button:focus-visible { outline: 1px solid var(--g3); outline-offset: 3px; }
+
+section.set { display: flex; flex-direction: column; gap: 14px; }
+.label { display: flex; align-items: baseline; gap: 12px; flex-wrap: wrap; }
+.label h2 { font-weight: 300; font-size: 22px; letter-spacing: -.02em; margin: 0; }
+.label span { font: 500 10px var(--mono); letter-spacing: .16em; color: var(--g1); text-transform: uppercase; }
+.pair { display: grid; grid-template-columns: minmax(0, 1.3fr) minmax(0, 1fr); border: 1px solid var(--line); }
+.stage { position: relative; min-height: 380px; display: flex; align-items: center; justify-content: center; border-right: 1px solid var(--line); cursor: pointer; overflow: hidden; -webkit-tap-highlight-color: transparent; }
+.stage .state { position: absolute; left: 0; right: 0; bottom: 18px; text-align: center; font: 500 10px var(--mono); letter-spacing: .18em; text-transform: uppercase; color: var(--g1); pointer-events: none; }
+.stage .state b { color: var(--fg); font-weight: 500; }
+.side { padding: 28px 28px 24px; display: flex; flex-direction: column; justify-content: center; min-width: 0; }
+.list { list-style: none; margin: 0; padding: 0; border-top: 1px solid var(--fg); position: relative; }
+.list li { border-bottom: 1px solid var(--line); }
+.row { display: flex; align-items: center; gap: 16px; min-height: 56px; padding: 0 6px; cursor: pointer; font-size: 16px; line-height: 24px; user-select: none; -webkit-tap-highlight-color: transparent; }
+.row .txt { flex: 1; min-width: 0; }
+.slot { width: 24px; height: 24px; flex: none; }
+.vh { position: absolute; width: 1px; height: 1px; overflow: hidden; clip: rect(0 0 0 0); white-space: nowrap; }
+
+.ctl { position: relative; flex: none; }
+.ctl .frame { position: absolute; inset: 0; border: solid transparent; }
+canvas.lq { position: absolute; pointer-events: none; }
+.ctl input, .ring input { position: absolute; inset: -6px; width: calc(100% + 12px); height: calc(100% + 12px); margin: 0; opacity: 0; cursor: pointer; }
+.ctl:has(input:focus-visible) .frame, .ring:has(input:focus-visible) { outline: 2px solid var(--fg); outline-offset: 4px; }
+.group { position: absolute; left: 0; top: 0; pointer-events: none; }
+.ring { position: absolute; border: solid transparent; border-radius: 50%; pointer-events: auto; }
+.hero-radio .cap { position: absolute; font: 500 10px var(--mono); letter-spacing: .16em; color: var(--g1); transform: translateX(-50%); }
+
+.spec { display: grid; grid-template-columns: repeat(auto-fit, minmax(240px, 1fr)); gap: 28px; border-top: 1px solid var(--fg); padding-top: 20px; }
+.spec h3 { font: 500 10px var(--mono); letter-spacing: .16em; text-transform: uppercase; color: var(--g2); margin: 0 0 10px; }
+.spec dl { margin: 0; display: grid; grid-template-columns: auto 1fr; gap: 6px 14px; font: 400 11.5px/1.5 var(--mono); }
+.spec dt { color: var(--g1); }
+.spec dd { margin: 0; color: var(--g3); font-variant-numeric: tabular-nums; min-width: 0; }
+
+@media (max-width: 760px) {
+  .pair { grid-template-columns: 1fr; }
+  .stage { border-right: 0; border-bottom: 1px solid var(--line); min-height: 300px; }
+  .side { padding: 16px; }
+}
+</style>
+
+<main class="wrap">
+  <div class="top">
+    <header>
+      <p class="eyebrow">Advanced Interface · Week 3 · Selectors · Set 01 · Minimal</p>
+      <h1>Lava</h1>
+    </header>
+    <div class="ctrls"><button type="button" id="speed" aria-pressed="false">Slow motion 0.25×</button></div>
+  </div>
+
+  <section class="set" aria-labelledby="h-sw">
+    <div class="label"><h2 id="h-sw">Pour</h2><span>Switch</span></div>
+    <div class="pair">
+      <label class="stage" id="sw-stage"><span class="vh">Lamp</span><span class="state" id="sw-state"></span></label>
+      <div class="side"><ul class="list" id="sw-list"></ul></div>
+    </div>
+  </section>
+
+  <section class="set" aria-labelledby="h-cb">
+    <div class="label"><h2 id="h-cb">Drop</h2><span>Checkbox</span></div>
+    <div class="pair">
+      <label class="stage" id="cb-stage"><span class="vh">Keep a copy</span><span class="state" id="cb-state"></span></label>
+      <div class="side"><ul class="list" id="cb-list"></ul></div>
+    </div>
+  </section>
+
+  <section class="set" aria-labelledby="h-rd">
+    <div class="label"><h2 id="h-rd">Drift</h2><span>Radio button</span></div>
+    <div class="pair">
+      <div class="stage hero-radio" id="rd-stage" role="radiogroup" aria-label="Size"><span class="state" id="rd-state"></span></div>
+      <div class="side"><ul class="list" id="rd-list" role="radiogroup" aria-labelledby="h-rd"></ul></div>
+    </div>
+  </section>
+  <section class="spec" aria-label="Spec">
+    <div><h3>Global</h3><dl>
+      <dt>Ink / paper</dt><dd>#111111 / #FFFFFF</dd>
+      <dt>Greys</dt><dd>#7A7A7A · #5C5C5C · #3A3A3A</dd>
+      <dt>Hairline</dt><dd>#E4E4E4 1px · list top #111 1px</dd>
+      <dt>Label</dt><dd>Inter Light 300 · 16 / 24</dd>
+      <dt>Caption</dt><dd>JetBrains Mono 500 · 10 / 14 · +16%</dd>
+      <dt>Row</dt><dd>56 min · padding 0 6 · gap 16</dd>
+      <dt>Wall</dt><dd>1.5 stroke, part of the liquid</dd>
+      <dt>Blend</dt><dd>wax↔wax 7 · wax↔wall 3</dd>
+      <dt>Focus</dt><dd>2 solid #111 · offset 4</dd>
+    </dl></div>
+    <div><h3>Pour · switch</h3><dl>
+      <dt>Vessel</dt><dd>60 × 30 · chambers Ø30 · waist Ø17</dd>
+      <dt>Off</dt><dd>wax Ø18 in left chamber</dd>
+      <dt>On</dt><dd>vessel flooded #111 · knob Ø20 #FFF</dd>
+      <dt>Motion</dt><dd>wax k420 c15 · tail k95 · flood k200 c10</dd>
+      <dt>Hover off</dt><dd>wax leans 11 into the waist</dd>
+      <dt>Hover on</dt><dd>flood swells 8% · knob leans 5</dd>
+      <dt>Press</dt><dd>wax 130% × 84%</dd>
+    </dl></div>
+    <div><h3>Drop · checkbox</h3><dl>
+      <dt>Vessel</dt><dd>24 × 24 · radius 7</dd>
+      <dt>Opening</dt><dd>8.4 wide · 13.6 on hover</dd>
+      <dt>Off</dt><dd>empty vessel</dd>
+      <dt>On</dt><dd>filled 25.5 · radius 7.75 · lid sealed</dd>
+      <dt>Check</dt><dd>2.3 stroke cut out of the fill</dd>
+      <dt>Drop</dt><dd>Ø9.2 · falls 34 · splash ×4</dd>
+      <dt>Inverse</dt><dd>wax rises out of the opening</dd>
+      <dt>Hover off</dt><dd>bead Ø6.4 hangs in the opening</dd>
+    </dl></div>
+    <div><h3>Drift · radio</h3><dl>
+      <dt>Ring</dt><dd>Ø24 · stroke 1.5</dd>
+      <dt>Doors</dt><dd>7 wide · facing neighbours</dd>
+      <dt>Off</dt><dd>empty ring</dd>
+      <dt>On</dt><dd>dot Ø12 centred</dd>
+      <dt>Motion</dt><dd>dot k210 c11.5 · 4 trailing drops</dd>
+      <dt>Hover</dt><dd>bead Ø6.4 in target · dot leans 7 · ring 110%</dd>
+      <dt>Press</dt><dd>bead Ø9.6</dd>
+    </dl></div>
+  </section>
+</main>
+
+<script>
+(() => {
+  const S = { speed: 1 };
+  const reduce = matchMedia('(prefers-reduced-motion: reduce)').matches;
+  const DPR = Math.min(2, window.devicePixelRatio || 1);
+  const clamp = (x, a = 0, b = 1) => Math.min(b, Math.max(a, x));
+  const lerp = (a, b, t) => a + (b - a) * t;
+  const INK = 0x111111;
+
+  /* ---------- spring ---------- */
+  class Sp {
+    constructor(x, k, c, eps = .001) { this.x = this.t = x; this.v = 0; this.k = k; this.c = c * (reduce ? 2.2 : 1); this.eps = eps; }
+    step(h) { this.v += (this.k * (this.t - this.x) - this.c * this.v) * h; this.x += this.v * h; }
+    rest() { if (Math.abs(this.v) < this.eps * 30 && Math.abs(this.t - this.x) < this.eps) { this.x = this.t; this.v = 0; return true; } return false; }
+  }
+
+  /* ---------- signed-distance liquid surface ---------- */
+  function sd(p, x, y) {
+    switch (p.t) {
+      case 'fn': return p.f(x, y);
+      case 'c': return Math.hypot(x - p.x, y - p.y) - p.r;
+      case 'e': { let u = x - p.x, v = y - p.y; if (p.a) { const cu = u * p.ca + v * p.sa; v = -u * p.sa + v * p.ca; u = cu; }
+        return (Math.hypot(u / p.rx, v / p.ry) - 1) * Math.min(p.rx, p.ry); }
+      case 'cap': { const dx = x < p.x0 ? p.x0 - x : x > p.x1 ? x - p.x1 : 0; return Math.hypot(dx, y - p.y) - p.r; }
+      case 'box': { const qx = Math.abs(x - p.x) - p.hw + p.r, qy = Math.abs(y - p.y) - p.hh + p.r;
+        return Math.hypot(Math.max(qx, 0), Math.max(qy, 0)) + Math.min(Math.max(qx, qy), 0) - p.r; }
+      case 'seg': { const px = x - p.ax, py = y - p.ay, bx = p.bx - p.ax, by = p.by - p.ay;
+        const hh = clamp((px * bx + py * by) / (bx * bx + by * by || 1)); return Math.hypot(px - bx * hh, py - by * hh) - p.r; }
+    }
+  }
+  function bounds(p) {
+    switch (p.t) {
+      case 'fn': return p.b;
+      case 'c': return [p.x - p.r, p.y - p.r, p.x + p.r, p.y + p.r];
+      case 'e': { const m = Math.max(p.rx, p.ry); return [p.x - m, p.y - m, p.x + m, p.y + m]; }
+      case 'cap': return [p.x0 - p.r, p.y - p.r, p.x1 + p.r, p.y + p.r];
+      case 'box': return [p.x - p.hw, p.y - p.hh, p.x + p.hw, p.y + p.hh];
+      case 'seg': return [Math.min(p.ax, p.bx) - p.r, Math.min(p.ay, p.by) - p.r, Math.max(p.ax, p.bx) + p.r, Math.max(p.ay, p.by) + p.r];
+    }
+  }
+  const smin = (a, b, k) => { const h = Math.max(k - Math.abs(a - b), 0) / k; return Math.min(a, b) - h * h * k * .25; };
+  const smax = (a, b, k) => -smin(-a, -b, k);
+  const sdBox = (x, y, cx, cy, hw, hh, r) => { const qx = Math.abs(x - cx) - hw + r, qy = Math.abs(y - cy) - hh + r;
+    return Math.hypot(Math.max(qx, 0), Math.max(qy, 0)) + Math.min(Math.max(qx, qy), 0) - r; };
+  const ell = (x, y, rx, ry, ang) => ({ t: 'e', x, y, rx, ry, a: ang || 0, ca: Math.cos(ang || 0), sa: Math.sin(ang || 0) });
+
+  class Surf {
+    constructor(parent) { this.cv = document.createElement('canvas'); this.cv.className = 'lq'; this.ctx = this.cv.getContext('2d'); parent.appendChild(this.cv); }
+    size(ox, oy, w, h) {
+      this.ox = ox; this.oy = oy;
+      Object.assign(this.cv.style, { left: ox + 'px', top: oy + 'px', width: w + 'px', height: h + 'px' });
+      this.W = this.cv.width = Math.ceil(w * DPR); this.H = this.cv.height = Math.ceil(h * DPR);
+      this.img = this.ctx.createImageData(this.W, this.H); this.buf = new Uint32Array(this.img.data.buffer); this.bb = null;
+    }
+    draw(prims, holes, k, kh, walls = [], kw = 1) {
+      prims = prims.filter(p => !(p.r <= .05 || p.rx <= .05 || p.ry <= .05 || p.hw <= .05 || p.hh <= .05));
+      holes = holes.filter(p => !(p.r <= .05));
+      const { buf, W, H, ox, oy } = this;
+      if (this.bb) { const [a, b, c, d] = this.bb; for (let j = b; j < d; j++) buf.fill(0, j * W + a, j * W + c); }
+      if (!prims.length && !walls.length) { this.bb = null; this.ctx.putImageData(this.img, 0, 0); return; }
+      let x0 = 1e9, y0 = 1e9, x1 = -1e9, y1 = -1e9;
+      for (const p of prims.concat(walls)) { const b = bounds(p); x0 = Math.min(x0, b[0]); y0 = Math.min(y0, b[1]); x1 = Math.max(x1, b[2]); y1 = Math.max(y1, b[3]); }
+      const m = Math.max(k, kw);
+      const i0 = clamp(Math.floor((x0 - m - ox) * DPR), 0, W), i1 = clamp(Math.ceil((x1 + m - ox) * DPR), 0, W);
+      const j0 = clamp(Math.floor((y0 - m - oy) * DPR), 0, H), j1 = clamp(Math.ceil((y1 + m - oy) * DPR), 0, H);
+      this.bb = [i0, j0, i1, j1];
+      const pb = prims.map(p => { const b = bounds(p); return [b[0] - m, b[1] - m, b[2] + m, b[3] + m]; });
+      const wb = walls.map(p => { const b = bounds(p); return [b[0] - kw - 1, b[1] - kw - 1, b[2] + kw + 1, b[3] + kw + 1]; });
+      const hb = holes.map(p => { const b = bounds(p); return [b[0] - kh - 1, b[1] - kh - 1, b[2] + kh + 1, b[3] + kh + 1]; });
+      const T = 8, L = [], WL = [], HL = [];
+      const hit = (b, tx0, ty0, tx1, ty1) => b[0] <= tx1 && b[2] >= tx0 && b[1] <= ty1 && b[3] >= ty0;
+      for (let tj = j0; tj < j1; tj += T) {
+        const je = Math.min(j1, tj + T), ty0 = tj / DPR + oy, ty1 = je / DPR + oy;
+        for (let ti = i0; ti < i1; ti += T) {
+          const ie = Math.min(i1, ti + T), tx0 = ti / DPR + ox, tx1 = ie / DPR + ox;
+          L.length = 0; WL.length = 0; HL.length = 0;
+          for (let n = 0; n < prims.length; n++) if (hit(pb[n], tx0, ty0, tx1, ty1)) L.push(prims[n]);
+          for (let n = 0; n < walls.length; n++) if (hit(wb[n], tx0, ty0, tx1, ty1)) WL.push(walls[n]);
+          if (!L.length && !WL.length) continue;
+          for (let n = 0; n < holes.length; n++) if (hit(hb[n], tx0, ty0, tx1, ty1)) HL.push(holes[n]);
+          const np = L.length, nw = WL.length, nh = HL.length;
+          const D = (x, y) => {
+            let d = 1e9;
+            if (np) { d = sd(L[0], x, y); for (let n = 1; n < np; n++) d = smin(d, sd(L[n], x, y), k); }
+            if (nw) { let dw = WL[0].f(x, y); for (let n = 1; n < nw; n++) dw = Math.min(dw, WL[n].f(x, y)); d = np ? smin(d, dw, kw) : dw; }
+            for (let n = 0; n < nh; n++) d = -smin(-d, sd(HL[n], x, y), kh);
+            return d;
+          };
+          // whole-tile test: distance fields change by at most 1px per px, so a tile far from the edge is all empty or all ink
+          const hd = Math.hypot(tx1 - tx0, ty1 - ty0) / 2 + 1.5 / DPR, dc = D((tx0 + tx1) / 2, (ty0 + ty1) / 2);
+          if (dc > hd) continue;
+          const solid = dc < -hd;
+          for (let j = tj; j < je; j++) {
+            const y = (j + .5) / DPR + oy, row = j * W;
+            if (solid) { buf.fill((255 << 24 | INK) >>> 0, row + ti, row + ie); continue; }
+            for (let i = ti; i < ie; i++) {
+              const x = (i + .5) / DPR + ox;
+              const a = .5 - D(x, y) * DPR; if (a <= 0) continue;
+              buf[row + i] = ((a >= 1 ? 255 : (a * 255) | 0) << 24 | INK) >>> 0;
+            }
+          }
+        }
+      }
+      this.ctx.putImageData(this.img, 0, 0);
+    }
+  }
+
+  /* ---------- shared input behaviour ---------- */
+  class Ctl {
+    constructor(zone, input) {
+      this.input = input; this.on = input.checked; this.hov = 0; this.prs = 0; this.awake = true; this.time = 0;
+      zone.addEventListener('pointerenter', e => { if (e.pointerType === 'mouse') { this.hov = 1; this.awake = true; } });
+      zone.addEventListener('pointerleave', () => { this.hov = 0; this.prs = 0; this.awake = true; });
+      zone.addEventListener('pointerdown', () => { this.prs = 1; this.awake = true; });
+      addEventListener('pointerup', () => { if (this.prs) { this.prs = 0; this.awake = true; } });
+      input.addEventListener('focus', () => { if (input.matches(':focus-visible')) { this.hov = 1; this.awake = true; } });
+      input.addEventListener('blur', () => { this.hov = 0; this.awake = true; });
+      input.addEventListener('change', () => { this.on = input.checked; this.changed && this.changed(); this.awake = true; });
+    }
+  }
+
+  /* ---------- Pour : switch ---------- */
+  class Switch extends Ctl {
+    constructor(host, zone, input, s) {
+      super(zone, input);
+      this.s = s; const W = this.W = 60 * s, H = this.H = 30 * s; this.pad = 26 * s;
+      this.xL = 15 * s; this.xR = 45 * s; this.r0 = 9 * s;
+      const cy = H / 2, R = 15 * s, wr = 8.5 * s, xl = this.xL, xr = this.xR;
+      // two round chambers joined by a narrow waist
+      this.hg = (x, y) => { const dy = y - cy;
+        const a = Math.min(Math.hypot(x - xl, dy) - R, Math.hypot(x - xr, dy) - R);
+        const dx = x < xl ? xl - x : x > xr ? x - xr : 0;
+        return smin(a, Math.hypot(dx, dy) - wr, 16 * s); };
+      this.wall = { t: 'fn', b: [-s, -s, W + s, H + s], f: (x, y) => Math.abs(this.hg(x, y)) - .75 * s };
+      const el = this.el = document.createElement('span'); el.className = 'ctl'; el.style.width = W + 'px'; el.style.height = H + 'px';
+      const fr = document.createElement('span'); fr.className = 'frame'; fr.style.borderWidth = 1.5 * s + 'px'; fr.style.borderRadius = H / 2 + 'px'; el.appendChild(fr);
+      this.surf = new Surf(el); this.surf.size(-this.pad, -this.pad, W + 2 * this.pad, H + 2 * this.pad);
+      el.appendChild(input); input.setAttribute('role', 'switch'); host.appendChild(el);
+      const on = this.on, e = .01 * s;
+      this.head = new Sp(on ? this.xR : this.xL, 420, 15, e);
+      this.tail = new Sp(on ? this.xR : this.xL, 95, 13, e);
+      this.flood = new Sp(on ? 1 : 0, 200, 10);
+      this.hole = new Sp(on ? 1 : 0, 520, 15);
+      this.hx = new Sp(this.xR, 320, 16, e);
+      this.sq = new Sp(0, 700, 24);
+      this.fl = on;
+      this.springs = [this.head, this.tail, this.flood, this.hole, this.hx, this.sq];
+    }
+    sim(h) {
+      const { xL, xR, s, hov } = this;
+      if (this.on) {
+        this.head.t = xR; this.tail.t = xR;
+        if (this.head.x > xL + .6 * (xR - xL)) this.fl = true;
+        if (this.fl) this.flood.t = 1 + .08 * hov;
+        if (this.flood.x > .8) this.hole.t = 1;
+        this.hx.t = xR - 5 * s * hov;
+      } else {
+        this.hole.t = 0; this.fl = false; this.hx.t = xR;
+        if (this.hole.x < .35) this.flood.t = 0;
+        if (this.flood.x < .3) { this.head.t = xL + 11 * s * hov; this.tail.t = xL; }
+      }
+      this.sq.t = this.prs;
+      for (const sp of this.springs) sp.step(h);
+    }
+    draw() {
+      const { s, W, H, r0, head, tail, flood, hole, sq, hov } = this, cy = H / 2;
+      const off = clamp(1 - flood.x * 2), t = this.time;
+      const v = clamp(Math.abs(head.v) / (480 * s), 0, .9);
+      const wob = hov * off * Math.sin(t * 11) * .07;
+      const hr = r0 * (1 + .06 * hov * off);
+      const wst = clamp(1 - Math.abs(head.x - W / 2) / (11 * s));
+      const prims = [ell(head.x, cy, hr * (1 + v * .9 + .3 * sq.x * off + wob + .25 * wst), hr * (1 - v * .38 - .16 * sq.x * off - wob * .6 - .22 * wst), 0)];
+      const gap = Math.abs(tail.x - head.x);
+      prims.push({ t: 'c', x: tail.x, y: cy, r: r0 * clamp(gap / (4 * s)) * (1 - .5 * clamp(gap / (18 * s))) });
+      const f = flood.x;
+      if (f > .02) {
+        const fm = Math.min(f, 1), rr = f > 1 ? H / 2 * f : lerp(r0, H / 2, fm);
+        const sqo = sq.x * (1 - off);
+        const cap = { t: 'cap', x0: lerp(head.x, this.xL, fm) + sqo * 2 * s, x1: lerp(head.x, this.xR, fm) - sqo * 2 * s, y: cy, r: (rr + 2 * s * fm) * (1 + .05 * sqo) };
+        const grow = Math.max(0, f - 1) * 30 * s + .75 * s - sqo * 1.2 * s, hg = this.hg;
+        prims.push({ t: 'fn', b: [-6 * s, -6 * s, W + 6 * s, H + 6 * s], f: (x, y) => Math.max(sd(cap, x, y), hg(x, y) - grow) });
+      }
+      const holes = [];
+      if (hole.x > .02) holes.push({ t: 'c', x: this.hx.x, y: cy, r: 10 * s * hole.x * (1 + .08 * hov * (1 - off) - .14 * sq.x * (1 - off)) });
+      this.surf.draw(prims, holes, 7 * s, 1.2 * s, [this.wall], 3 * s);
+      this.input.setAttribute('aria-checked', this.on);
+    }
+    atRest() { return this.springs.every(sp => sp.rest()) && !this.hov && !this.prs; }
+    label() { const r = this.springs.every(sp => Math.abs(sp.t - sp.x) < .02 * Math.max(1, Math.abs(sp.t)));
+      return this.on ? (this.hole.x > .9 && r ? '<b>on</b>' : 'pouring') : (this.flood.x < .02 && r ? '<b>off</b>' : 'draining'); }
+  }
+
+  /* ---------- Drop : checkbox ---------- */
+  const CK = [[7, 12.4], [10.4, 15.8], [17.2, 9]];
+  class Check extends Ctl {
+    constructor(host, zone, input, s) {
+      super(zone, input);
+      this.s = s; const B = this.B = 24 * s; this.c = B / 2;
+      const el = this.el = document.createElement('span'); el.className = 'ctl'; el.style.width = B + 'px'; el.style.height = B + 'px';
+      const fr = document.createElement('span'); fr.className = 'frame'; fr.style.borderWidth = 1.5 * s + 'px'; fr.style.borderRadius = 7 * s + 'px'; el.appendChild(fr);
+      this.surf = new Surf(el); this.surf.size(-30 * s, -64 * s, B + 60 * s, B + 100 * s);
+      this.gap = new Sp(0, 300, 14);
+      el.appendChild(input); host.appendChild(el);
+      const on = this.on;
+      this.pool = new Sp(on ? 1 : 0, 230, 8); this.sx = new Sp(1, 520, 9); this.sy = new Sp(1, 520, 9);
+      this.chk = new Sp(on ? 1 : 0, 240, 22); this.bead = new Sp(0, 300, 10); this.sq = new Sp(0, 700, 24);
+      this.springs = [this.pool, this.sx, this.sy, this.chk, this.bead, this.sq, this.gap];
+      this.drop = null; this.drain = null; this.parts = []; this.fl = on; this.dr = false;
+    }
+    changed() {
+      const s = this.s;
+      if (this.on) { this.fl = false; this.dr = false; this.drain = null; this.bead.t = 0;
+        if (this.pool.x < .3 && !this.drop) this.drop = { x: this.c, y: this.bead.x > .3 ? 6 * s : -34 * s, vy: this.bead.x > .3 ? 0 : 0 }; }
+      else { this.fl = false; this.dr = false; }
+    }
+    impact() {
+      const s = this.s, c = this.c;
+      this.pool.x = Math.max(this.pool.x, .32); this.pool.v = 10; this.pool.t = 1; this.sx.v += 11; this.sy.v -= 14;
+      for (let i = 0; i < 4; i++) { const side = i % 2 ? 1 : -1, tier = i >> 1;
+        this.parts.push({ x: c + side * 3 * s, y: c - 4 * s, vx: side * (40 + 32 * tier) * s, vy: -(500 - 140 * tier) * s, r: (2.8 - .7 * tier) * s, life: 0 }); }
+    }
+    sim(h) {
+      const s = this.s, c = this.c, B = this.B, g = 2700 * s, hov = this.hov;
+      if (this.drop) { const d = this.drop; d.vy += g * h; d.y += d.vy * h; if (d.y >= c - 1 * s) { this.drop = null; this.impact(); } }
+      this.parts = this.parts.filter(p => { p.vy += g * h; if (p.vy > 0) p.vx += (c - p.x) * 26 * h; p.x += p.vx * h; p.y += p.vy * h; p.life += h;
+        return !(p.vy > 0 && p.y > -1.5 * s && Math.abs(p.x - c) < B * .5 + 2 * s) && p.life < 1.4; });
+      if (this.drain) { const d = this.drain; d.vy -= g * .55 * h; d.vy *= 1 - 1.5 * h; d.y += d.vy * h; d.t += h; d.x = c + Math.sin(d.t * 7) * 2.2 * s * clamp(-d.y / (20 * s));
+        d.r = Math.max(0, d.r - h * (d.y < 0 ? 5 : 0) * s); if (d.y < -60 * s || d.r <= .1) this.drain = null; }
+      if (this.on) {
+        if (!this.drop && this.pool.t > 0 || this.pool.x > .3) this.pool.t = 1 + .09 * hov * (this.fl ? 1 : 0);
+        if (this.pool.x > .85) this.fl = true;
+        if (this.fl) this.chk.t = 1;
+        this.bead.t = 0;
+      } else {
+        this.chk.t = 0;
+        if (this.chk.x < .15 && this.pool.t !== 0) { this.pool.t = 0; this.sy.v += 9; this.sx.v -= 7; }
+        if (!this.dr && this.pool.t === 0 && this.pool.x < .45 && this.pool.x > .05) { this.dr = true; this.drain = { x: c, y: c - 3 * s, vy: -20 * s, r: 5 * s, t: 0 }; }
+        this.bead.t = hov && this.pool.x < .1 && !this.drain ? 1 : 0;
+      }
+      this.sq.t = this.prs; this.gap.t = this.hov * (this.on ? 0 : 1) + (this.drop ? .6 : 0) + (this.drain && this.drain.y > -4 * s ? .8 : 0);
+      for (const sp of this.springs) sp.step(h);
+    }
+    draw() {
+      const { s, c, B, pool, sx, sy, sq, chk, bead } = this, t = this.time, prims = [], holes = [];
+      if (this.drop) { const e = clamp(this.drop.vy / (900 * s), 0, .9); prims.push(ell(c, this.drop.y, 4.6 * s * (1 - .3 * e), 4.6 * s * (1 + .8 * e), 0)); }
+      const P = pool.x, onq = clamp(P);
+      if (P > .02) {
+        const full = (B / 2 + .75 * s) * P, hw = full * sx.x * (1 + .07 * sq.x), hh = full * sy.x * (1 - .1 * sq.x);
+        prims.push({ t: 'box', x: c, y: c + (1 - clamp(P)) * (this.on ? 3 : -6) * s, hw, hh, r: Math.min(7.75 * s * Math.max(1, P), hw, hh) });
+      }
+      for (const p of this.parts) { const e = clamp(Math.abs(p.vy) / (700 * s), 0, .7); prims.push(ell(p.x, p.y, p.r * (1 - .25 * e), p.r * (1 + .6 * e), 0)); }
+      if (this.drain) { const d = this.drain, e = clamp(-d.vy / (500 * s), 0, .7); prims.push(ell(d.x, d.y, d.r * (1 - .25 * e), d.r * (1 + .5 * e), 0)); }
+      const b = bead.x;
+      if (b > .02) {
+        const br = 3.2 * s * b * (1 + .35 * sq.x);
+        prims.push(ell(c, 2.5 * s + 5.4 * s * b + Math.sin(t * 9) * 1.1 * s * b + 2 * s * sq.x, br * (1 - .08 * Math.sin(t * 9)), br * (1 + .14 * Math.sin(t * 9)), 0));
+      }
+      const q = clamp(chk.x);
+      if (q > .01 && P > .4) {
+        const pt = ([x, y]) => [c + (x - 12) * s * P * sx.x, c + (y - 12) * s * P * sy.x];
+        const a = pt(CK[0]), m = pt(CK[1]), z = pt(CK[2]);
+        const L1 = Math.hypot(m[0] - a[0], m[1] - a[1]), L2 = Math.hypot(z[0] - m[0], z[1] - m[1]), dist = q * (L1 + L2), r = 1.15 * s * (1 + .08 * this.hov);
+        const u = Math.min(1, dist / L1);
+        holes.push({ t: 'seg', ax: a[0], ay: a[1], bx: lerp(a[0], m[0], u), by: lerp(a[1], m[1], u), r });
+        if (dist > L1) { const w = (dist - L1) / L2; holes.push({ t: 'seg', ax: m[0], ay: m[1], bx: lerp(m[0], z[0], w), by: lerp(m[1], z[1], w), r }); }
+      }
+      const gw = (4.2 + 2.6 * this.gap.x) * s * (1 - clamp((P - .75) * 4)), R7 = 7 * s, w = .75 * s;
+      const wall = { t: 'fn', b: [-s, -s, B + s, B + s], f: gw < .2 * s ? (x, y) => Math.abs(sdBox(x, y, c, c, c, c, R7)) - w : (x, y) => smax(Math.abs(sdBox(x, y, c, c, c, c, R7)) - w, -sdBox(x, y, c, 0, gw, 3 * s, 0), 1.6 * s) };
+      this.surf.draw(prims, holes, 6 * s, .8 * s, [wall], 2.6 * s);
+    }
+    atRest() { return this.springs.every(sp => sp.rest()) && !this.drop && !this.drain && !this.parts.length && !this.hov && !this.prs; }
+    label() { return this.on ? (this.chk.x > .98 && !this.parts.length ? '<b>on</b>' : 'dripping') : (this.pool.x < .02 && !this.drain ? '<b>off</b>' : 'draining'); }
+  }
+
+  /* ---------- Drift : radio group ---------- */
+  class Radio {
+    constructor(host, inputs, s, opts) {
+      this.s = s; this.inputs = inputs; this.posFn = opts.pos; this.hi = -1; this.prs = 0; this.awake = true; this.time = 0;
+      this.sel = inputs.findIndex(i => i.checked);
+      const el = this.el = document.createElement('div'); el.className = 'group'; host.appendChild(el);
+      this.surf = new Surf(el);
+      this.rings = inputs.map((inp, i) => { const r = document.createElement('span'); r.className = 'ring'; r.style.borderWidth = 1.5 * s + 'px'; r.appendChild(inp); el.appendChild(r);
+        if (opts.ringHover) this.zone(r, i);
+        inp.addEventListener('focus', () => { if (inp.matches(':focus-visible')) this.hover(i, 1); });
+        inp.addEventListener('blur', () => this.hover(i, 0));
+        inp.addEventListener('change', () => { if (inp.checked) this.select(i); });
+        return r; });
+      addEventListener('pointerup', () => { if (this.prs) { this.prs = 0; this.awake = true; } });
+      this.ringS = inputs.map(() => new Sp(1, 520, 11)); this.beads = inputs.map(() => new Sp(0, 300, 10));
+      this.layout();
+      const p = this.pos[this.sel];
+      this.nodes = [0, 1, 2, 3, 4].map(() => ({ x: p.x, y: p.y, vx: 0, vy: 0 }));
+    }
+    zone(z, i) { z.addEventListener('pointerenter', e => { if (e.pointerType === 'mouse') this.hover(i, 1); }); z.addEventListener('pointerleave', () => this.hover(i, 0));
+      z.addEventListener('pointerdown', () => { this.prs = 1; this.awake = true; }); }
+    hover(i, on) { if (on) this.hi = i; else if (this.hi === i) { this.hi = -1; this.prs = 0; } this.awake = true; }
+    layout() {
+      const P = this.posFn(); this.pos = P.pts; const s = this.s, R = 12 * s, pad = 30 * s;
+      Object.assign(this.el.style, { width: P.w + 'px', height: P.h + 'px', left: (P.left || 0) + 'px', top: (P.top || 0) + 'px' });
+      this.surf.size(-pad, -pad, P.w + 2 * pad, P.h + 2 * pad);
+      this.rings.forEach((r, i) => Object.assign(r.style, { left: this.pos[i].x - R + 'px', top: this.pos[i].y - R + 'px', width: 2 * R + 'px', height: 2 * R + 'px' }));
+      if (this.nodes && this.travel !== true) { const p = this.pos[this.sel]; this.nodes.forEach(n => { n.x = p.x; n.y = p.y; }); }
+      this.awake = true;
+    }
+    select(i) { if (i === this.sel) return; this.sel = i; this.travel = true; this.awake = true; }
+    sim(h) {
+      const s = this.s, to = this.pos[this.sel], hi = this.hi;
+      let tx = to.x, ty = to.y;
+      if (hi >= 0 && hi !== this.sel) { const dx = this.pos[hi].x - to.x, dy = this.pos[hi].y - to.y, L = Math.hypot(dx, dy) || 1; const k = 7 * s + Math.sin(this.time * 10) * 1.2 * s; tx += dx / L * k; ty += dy / L * k; }
+      const n0 = this.nodes[0], K = 210, C = reduce ? 30 : 11.5;
+      n0.vx += (K * (tx - n0.x) - C * n0.vx) * h; n0.vy += (K * (ty - n0.y) - C * n0.vy) * h; n0.x += n0.vx * h; n0.y += n0.vy * h;
+      for (let i = 1; i < this.nodes.length; i++) { const n = this.nodes[i], p = this.nodes[i - 1], k2 = 380, c2 = reduce ? 40 : 20;
+        n.vx += (k2 * (p.x - n.x) - c2 * n.vx) * h; n.vy += (k2 * (p.y - n.y) - c2 * n.vy) * h; n.x += n.vx * h; n.y += n.vy * h; }
+      if (this.travel && Math.hypot(n0.x - to.x, n0.y - to.y) < 3 * s) { this.travel = false; this.ringS[this.sel].v += 5; }
+      this.beads.forEach((b, i) => { b.t = i === hi && i !== this.sel ? 1 : 0; b.step(h); });
+      this.ringS.forEach((r, i) => { r.t = 1 + (i === hi ? .1 - .05 * this.prs : 0); r.step(h); });
+    }
+    draw() {
+      const s = this.s, rd = 6 * s, n0 = this.nodes[0], t = this.time;
+      const sp = Math.hypot(n0.vx, n0.vy), e = clamp(sp / (520 * s), 0, .85), ang = Math.atan2(n0.vy, n0.vx);
+      const selH = this.hi === this.sel ? 1 : 0, sq = this.prs * selH;
+      const r0 = rd * (1 + .12 * selH);
+      const prims = [ell(n0.x, n0.y, r0 * (1 + e * 1.1 + .2 * sq), r0 * (1 - e * .4 - .14 * sq), e > .02 ? ang : 0)];
+      for (let i = 1; i < this.nodes.length; i++) { const n = this.nodes[i], dl = Math.hypot(n.x - n0.x, n.y - n0.y);
+        prims.push({ t: 'c', x: n.x, y: n.y, r: rd * clamp(dl / (5 * s)) * (1 - .14 * i) }); }
+      this.beads.forEach((b, i) => { if (b.x > .02) prims.push({ t: 'c', x: this.pos[i].x, y: this.pos[i].y, r: 3.2 * s * b.x * (1 + .5 * this.prs) * (1 + .07 * Math.sin(t * 9)) }); });
+      const w = .75 * s, R0 = 12 * s;
+      const walls = this.pos.map((p, i) => { const R = R0 * this.ringS[i].x, doors = [];
+        [i - 1, i + 1].forEach(j => { const q = this.pos[j]; if (!q) return; const dx = q.x - p.x, dy = q.y - p.y, L = Math.hypot(dx, dy) || 1, ux = dx / L, uy = dy / L;
+          doors.push([p.x + ux * R, p.y + uy * R, Math.abs(ux) > .5 ? 3 * s : 3.6 * s, Math.abs(ux) > .5 ? 3.6 * s : 3 * s]); });
+        return { t: 'fn', b: [p.x - R - s, p.y - R - s, p.x + R + s, p.y + R + s], f: (x, y) => { let d = Math.abs(Math.hypot(x - p.x, y - p.y) - R) - w;
+          for (const g of doors) d = smax(d, -sdBox(x, y, g[0], g[1], g[2], g[3], 0), 1.4 * s); return d; } }; });
+      this.surf.draw(prims, [], 7 * s, 0, walls, 3 * s);
+    }
+    atRest() {
+      const n = this.nodes, to = this.pos[this.sel];
+      const still = n.every(m => Math.hypot(m.vx, m.vy) < .3 && Math.hypot(m.x - to.x, m.y - to.y) < .05);
+      if (still) n.forEach(m => { m.x = to.x; m.y = to.y; m.vx = m.vy = 0; });
+      return still && this.hi < 0 && this.ringS.every(r => r.rest()) && this.beads.every(b => b.rest());
+    }
+  }
+
+  /* ---------- build ---------- */
+  const all = [];
+  const mk = (type, id, checked, name) => { const i = document.createElement('input'); i.type = type; i.id = id; if (name) i.name = name; i.checked = !!checked; return i; };
+
+  const swStage = document.getElementById('sw-stage'), swState = document.getElementById('sw-state');
+  const swHero = new Switch(swStage, swStage, mk('checkbox', 'sw-hero', false), 3.4);
+  swStage.insertBefore(swHero.el, swStage.firstChild);
+  swHero.onState = () => swState.innerHTML = swHero.label();
+  const swList = document.getElementById('sw-list');
+  [['Wi-Fi', 1], ['Bluetooth', 0], ['Airplane mode', 0]].forEach(([t, c], i) => {
+    const li = document.createElement('li'); li.innerHTML = `<label class="row"><span class="txt">${t}</span></label>`; swList.appendChild(li);
+    const row = li.firstChild; all.push(new Switch(row, row, mk('checkbox', 'sw' + i, c), 1));
+  });
+  all.push(swHero);
+
+  const cbStage = document.getElementById('cb-stage'), cbState = document.getElementById('cb-state');
+  const cbHero = new Check(cbStage, cbStage, mk('checkbox', 'cb-hero', false), 3.6);
+  cbStage.insertBefore(cbHero.el, cbStage.firstChild);
+  cbHero.onState = () => cbState.innerHTML = cbHero.label();
+  const cbList = document.getElementById('cb-list');
+  [['Email', 1], ['Text message', 0], ['Push notification', 1]].forEach(([t, c], i) => {
+    const li = document.createElement('li'); li.innerHTML = `<label class="row"><span class="txt">${t}</span></label>`; cbList.appendChild(li);
+    const row = li.firstChild; const ck = new Check(row, row, mk('checkbox', 'cb' + i, c), 1);
+    row.insertBefore(ck.el, row.firstChild); all.push(ck);
+  });
+  all.push(cbHero);
+
+  const rdStage = document.getElementById('rd-stage'), rdState = document.getElementById('rd-state');
+  const HS = 2.6, SP = 112, NAMES = ['Small', 'Medium', 'Large'];
+  const heroInputs = NAMES.map((n, i) => { const x = mk('radio', 'rdh' + i, i === 0, 'size-hero'); x.setAttribute('aria-label', n); return x; });
+  const rdHero = new Radio(rdStage, heroInputs, HS, { ringHover: true, pos: () => {
+    const R = 12 * HS, w = SP * 2 + 2 * R, h = 2 * R;
+    return { w, h, left: (rdStage.clientWidth - w) / 2, top: (rdStage.clientHeight - h) / 2 - 12, pts: [0, 1, 2].map(i => ({ x: R + i * SP, y: R })) };
+  } });
+  const caps = NAMES.map((n, i) => { const c = document.createElement('span'); c.className = 'cap'; c.textContent = n[0]; rdHero.el.appendChild(c); return c; });
+  const placeCaps = () => caps.forEach((c, i) => { c.style.left = rdHero.pos[i].x + 'px'; c.style.top = 24 * HS + 22 + 'px'; });
+  placeCaps();
+  rdHero.onState = () => rdState.innerHTML = rdHero.travel ? 'drifting' : `<b>${NAMES[rdHero.sel].toLowerCase()}</b>`;
+
+  const rdList = document.getElementById('rd-list');
+  const rows = NAMES.map((t, i) => {
+    const li = document.createElement('li'); li.innerHTML = `<label class="row" for="rd${i}"><span class="slot"></span><span class="txt">${t}</span></label>`; rdList.appendChild(li); return li.firstChild; });
+  const listInputs = rows.map((_, i) => mk('radio', 'rd' + i, i === 1, 'size'));
+  const rdL = new Radio(rdList, listInputs, 1, { pos: () => {
+    const slot = rows[0].querySelector('.slot'), x0 = slot.offsetLeft + 12;
+    return { w: x0 + 24, h: rdList.offsetHeight, pts: rows.map(r => ({ x: x0, y: r.parentNode.offsetTop + r.offsetHeight / 2 })) };
+  } });
+  rows.forEach((r, i) => rdL.zone(r, i));
+  all.push(rdHero, rdL);
+
+  const relayout = () => { rdHero.layout(); rdL.layout(); placeCaps(); };
+  addEventListener('resize', relayout);
+  document.fonts && document.fonts.ready.then(relayout);
+
+  const spd = document.getElementById('speed');
+  spd.onclick = () => { S.speed = S.speed === 1 ? .25 : 1; spd.setAttribute('aria-pressed', S.speed !== 1); };
+
+  const STEP = 1 / 240;
+  for (const c of all) { c.draw(); c.onState && c.onState(); }
+  let last = performance.now();
+  function frame(now) {
+    const dt = Math.min(.05, (now - last) / 1000) * S.speed; last = now;
+    for (const c of all) {
+      if (!c.awake) continue;
+      c.time += dt;
+      const n = Math.max(1, Math.ceil(dt / STEP)), h = dt / n;
+      for (let i = 0; i < n; i++) c.sim(h);
+      c.draw();
+      c.onState && c.onState();
+      c.awake = !c.atRest();
+      if (!c.awake) { c.draw(); c.onState && c.onState(); }
+    }
+    requestAnimationFrame(frame);
+  }
+  requestAnimationFrame(frame);
+
+  const fire = (inp, v) => { inp.checked = v; inp.dispatchEvent(new Event('change')); };
+  setTimeout(() => fire(swHero.input, true), 700);
+  setTimeout(() => fire(cbHero.input, true), 1100);
+  setTimeout(() => fire(heroInputs[2], true), 1500);
+})();
+</script>
+
+</body>
+</html>
